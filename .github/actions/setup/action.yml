@@ -1,0 +1,12 @@
+# This repo's own setup hook, run by the reusable workflows during self-test.
+# It exists to exercise the hook mechanism and the setup-capnproto action; the
+# fixture crate doesn't actually need capnp.
+name: Setup
+description: Project setup hook for the rust-ci self-test.
+
+runs:
+  using: composite
+  steps:
+    - uses: ./setup-capnproto
+    - shell: bash
+      run: capnp --version

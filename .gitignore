@@ -1,0 +1,4 @@
+# Built/locked when the self-test runs the fixture; not part of the render.
+/tests/fixture/Cargo.lock
+/tests/fixture/target
+.DS_Store

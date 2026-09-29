@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/{{project-name}}",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "{{msrv}}"
+license = "MIT"
+authors = ["{{author}}"]
+repository = "https://github.com/{{github_owner}}/{{project-name}}"
+
+[workspace.dependencies]
+{{project-name}} = { path = "crates/{{project-name}}", version = "0.1.0" }
+
+[workspace.metadata.release]
+# One shared version and a single `vX.Y.Z` tag for the whole workspace. Crates
+# with `publish = false` are skipped; add `tag = false` to secondary crates if
+# more are published. Driven by the Release workflow (puremourning/rust-ci).
+shared-version = true
+tag-name = "v{% raw %}{{version}}{% endraw %}"
+allow-branch = ["main"]
+pre-release-commit-message = "Release v{% raw %}{{version}}{% endraw %}"

@@ -1,0 +1,25 @@
+[package]
+name = "fixture"
+description = "Fixture rendered from the rust-ci template"
+documentation = "https://docs.rs/fixture"
+readme = "../../README.md"
+keywords = []
+categories = []
+include = [
+  "src/**/*.rs",
+]
+
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.release]
+# Keep the install snippet in the README pinned to the released version.
+pre-release-replacements = [
+  { file = "../../README.md", search = 'fixture = "[^"]+"', replace = 'fixture = "{{version}}"', exactly = 1 },
+]
+
+[dependencies]

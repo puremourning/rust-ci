@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/{ci,release}.yml:
+    ignore:
+      # $CARGO_ARGS and friends are deliberately word-split into arguments.
+      - 'SC2086'

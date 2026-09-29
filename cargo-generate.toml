@@ -1,0 +1,4 @@
+# `cargo generate --git https://github.com/puremourning/rust-ci` picks the
+# template from here, so the subfolder argument is optional.
+[template]
+sub_templates = ["template"]

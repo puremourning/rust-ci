@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-{% raw %}${{ github.ref }}{% endraw %}
+  cancel-in-progress: true
+
+jobs:
+  # Shared matrix/fmt/clippy/docs/miri from puremourning/rust-ci. System
+  # dependencies go in .github/actions/setup/action.yml (see CLAUDE.md).
+  # Add project-specific jobs alongside this one.
+  ci:
+    uses: puremourning/rust-ci/.github/workflows/ci.yml@v1
+    with:
+      msrv: "{{msrv}}"
+      miri: {{miri}}

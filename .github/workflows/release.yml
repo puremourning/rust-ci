@@ -1,0 +1,139 @@
+# Reusable release: cargo-release bumps, commits, tags, pushes and publishes to
+# crates.io, then a GitHub release is created with auto-generated notes.
+#
+# Callers:
+#
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         version:
+#           description: SemVer (e.g. 0.2.0, no v prefix) or patch/minor/major.
+#           required: true
+#           type: string
+#   permissions:
+#     contents: write
+#   jobs:
+#     release:
+#       uses: puremourning/rust-ci/.github/workflows/release.yml@v1
+#       with:
+#         version: ${{ inputs.version }}
+#       secrets:
+#         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+#
+# Release configuration (shared-version, tag-name, allow-branch, ...) lives in
+# [workspace.metadata.release] in the caller's Cargo.toml.
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: An explicit SemVer (no v prefix) or a bump level (patch, minor, major).
+        required: true
+        type: string
+      dry-run:
+        description: Run cargo-release without --execute and skip the GitHub release.
+        required: false
+        type: boolean
+        default: false
+      cargo-args:
+        description: Package selection passed to cargo test and cargo release.
+        required: false
+        type: string
+        default: --workspace
+      working-directory:
+        description: Directory containing the Cargo workspace.
+        required: false
+        type: string
+        default: .
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        description: crates.io token with publish-update scope. Not needed for dry runs.
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_ARGS: ${{ inputs.cargo-args }}
+  RELEASE_LEVEL: ${{ inputs.version }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - name: Check preconditions
+        # Runs before checkout, so the working directory doesn't exist yet.
+        working-directory: .
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+        run: |
+          if [ "$DRY_RUN" != "true" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::Releases must be run from main (got $GITHUB_REF)"
+              exit 1
+            fi
+            if [ "$HAS_TOKEN" != "true" ]; then
+              echo "::error::CARGO_REGISTRY_TOKEN secret is not set"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup
+        if: hashFiles('.github/actions/setup/action.yml') != ''
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+
+      - name: Install cargo-release
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-release
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # cargo-release's own verification is a build of the packaged crate, not a
+      # test run, and the dispatch is manual so main may not be green yet.
+      - name: Test
+        run: cargo test $CARGO_ARGS
+
+      # Bumps the version, updates Cargo.lock, applies pre-release-replacements,
+      # verifies with `cargo publish --dry-run`, commits "Release vX.Y.Z", tags,
+      # pushes and publishes. Without --execute it only reports what it would do.
+      - name: Release
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          EXECUTE: ${{ !inputs.dry-run && '--execute' || '' }}
+        run: cargo release "$RELEASE_LEVEL" $CARGO_ARGS --no-confirm $EXECUTE
+
+      # Read the version back out of the bumped manifest: the input may have
+      # been a bump level rather than a number.
+      - name: Create GitHub release
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '[.packages[] | select(.publish != [])][0].version')
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes

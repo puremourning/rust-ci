@@ -1,0 +1,210 @@
+# Reusable CI for a Rust crate or workspace.
+#
+# Callers:
+#
+#   jobs:
+#     ci:
+#       uses: puremourning/rust-ci/.github/workflows/ci.yml@v1
+#       with:
+#         msrv: "1.98"
+#
+# Project-specific system dependencies (capnp, apt packages, ...) go in the
+# caller's own `.github/actions/setup/action.yml`, which every job here runs
+# right after checkout if it exists. See README.md.
+name: CI
+
+on:
+  workflow_call:
+    inputs:
+      msrv:
+        description: Minimum supported Rust version, added to the test matrix.
+        required: true
+        type: string
+      toolchains:
+        description: JSON list of toolchains to test in addition to the MSRV.
+        required: false
+        type: string
+        default: '["stable", "beta", "nightly"]'
+      runners:
+        description: JSON list of runner labels to test on.
+        required: false
+        type: string
+        default: '["ubuntu-latest"]'
+      nightly-allow-failure:
+        description: Don't fail CI when the nightly test entry fails.
+        required: false
+        type: boolean
+        default: true
+      cargo-args:
+        description: Package selection passed to cargo build/test/clippy/doc.
+        required: false
+        type: string
+        default: --workspace
+      working-directory:
+        description: Directory containing the Cargo workspace.
+        required: false
+        type: string
+        default: .
+      fmt-unstable:
+        description: Check formatting with --unstable-features --error-on-unformatted.
+        required: false
+        type: boolean
+        default: true
+      docs:
+        description: Build docs with RUSTDOCFLAGS=-Dwarnings.
+        required: false
+        type: boolean
+        default: true
+      miri:
+        description: Run the test suite under miri.
+        required: false
+        type: boolean
+        default: false
+      miri-args:
+        description: Arguments to `cargo miri test`.
+        required: false
+        type: string
+        default: --workspace
+      miriflags:
+        description: MIRIFLAGS for the miri job.
+        required: false
+        type: string
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  CARGO_ARGS: ${{ inputs.cargo-args }}
+
+jobs:
+  matrix:
+    name: matrix
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.matrix.outputs.rust }}
+    steps:
+      - id: matrix
+        env:
+          TOOLCHAINS: ${{ inputs.toolchains }}
+          MSRV: ${{ inputs.msrv }}
+        run: echo "rust=$(jq -cn --argjson t "$TOOLCHAINS" --arg m "$MSRV" '$t + [$m]')" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.rust }})
+    needs: matrix
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    # nightly rolls new lints constantly and RUSTFLAGS=-Dwarnings also applies
+    # to dependency builds, so by default the nightly entry may fail.
+    continue-on-error: ${{ matrix.rust == 'nightly' && inputs.nightly-allow-failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.runners) }}
+        rust: ${{ fromJSON(needs.matrix.outputs.rust) }}
+    env:
+      # rust-toolchain.toml takes precedence over the toolchain installed by
+      # dtolnay/rust-toolchain; this does not, so each entry really builds with
+      # the toolchain it names.
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: ./.github/actions/setup
+        if: hashFiles('.github/actions/setup/action.yml') != ''
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+      - run: rustc -V
+      - name: Build
+        run: cargo build $CARGO_ARGS --all-targets
+      - name: Test
+        run: cargo test $CARGO_ARGS
+
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+      FMT_FLAGS: ${{ inputs.fmt-unstable && '--unstable-features --error-on-unformatted' || '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: rustfmt -V
+      - run: cargo fmt --all -- --check $FMT_FLAGS
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: ./.github/actions/setup
+        if: hashFiles('.github/actions/setup/action.yml') != ''
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+      - run: rustc -V
+      - run: cargo clippy $CARGO_ARGS --all-targets -- -Dwarnings
+
+  docs:
+    name: docs
+    if: inputs.docs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      # Fail on broken intra-doc links and other rustdoc lints.
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup
+        if: hashFiles('.github/actions/setup/action.yml') != ''
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+      - run: cargo doc $CARGO_ARGS --no-deps
+
+  miri:
+    name: miri
+    if: inputs.miri
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+      MIRIFLAGS: ${{ inputs.miriflags }}
+      MIRI_ARGS: ${{ inputs.miri-args }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: ./.github/actions/setup
+        if: hashFiles('.github/actions/setup/action.yml') != ''
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }}
+      - run: rustc -V
+      - run: cargo miri setup
+      - run: cargo miri test $MIRI_ARGS

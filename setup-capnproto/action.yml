@@ -1,0 +1,39 @@
+name: Setup Cap'n Proto
+description: Build and install Cap'n Proto from source, with caching keyed on version and OS.
+
+inputs:
+  version:
+    description: "Cap'n Proto version to install (e.g. 1.3.0)"
+    required: false
+    default: "1.3.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Cap'n Proto install
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/capnp-install
+        key: capnp-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+
+    - name: Build Cap'n Proto ${{ inputs.version }} from source
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CAPNP_VERSION: ${{ inputs.version }}
+        PREFIX: ${{ runner.temp }}/capnp-install
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        cd "$work"
+        curl -fsSL "https://capnproto.org/capnproto-c++-${CAPNP_VERSION}.tar.gz" | tar xz
+        cd "capnproto-c++-${CAPNP_VERSION}"
+        ./configure --prefix="$PREFIX" --disable-shared --enable-static
+        # nproc doesn't exist on macOS runners.
+        make -j"$(getconf _NPROCESSORS_ONLN)"
+        make install
+
+    - name: Expose capnp on PATH
+      shell: bash
+      run: echo "${{ runner.temp }}/capnp-install/bin" >> "$GITHUB_PATH"

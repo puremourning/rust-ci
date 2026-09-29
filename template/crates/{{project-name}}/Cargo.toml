@@ -1,0 +1,25 @@
+[package]
+name = "{{project-name}}"
+description = "{{description}}"
+documentation = "https://docs.rs/{{project-name}}"
+readme = "../../README.md"
+keywords = []
+categories = []
+include = [
+  "src/**/*.rs",
+]
+
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.release]
+# Keep the install snippet in the README pinned to the released version.
+pre-release-replacements = [
+  { file = "../../README.md", search = '{{project-name}} = "[^"]+"', replace = '{{project-name}} = "{% raw %}{{version}}{% endraw %}"', exactly = 1 },
+]
+
+[dependencies]

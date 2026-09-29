@@ -1,0 +1,41 @@
+[template]
+cargo_generate_version = ">=0.23"
+# No placeholders in these, and they contain GitHub `${{ }}` expressions that
+# Liquid would otherwise try to render.
+exclude = [".github/workflows/release.yml"]
+
+[placeholders.description]
+type = "string"
+prompt = "One-line crate description?"
+default = "TODO: describe this crate"
+
+[placeholders.msrv]
+type = "string"
+prompt = "Minimum supported Rust version?"
+default = "1.98"
+regex = "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"
+
+[placeholders.github_owner]
+type = "string"
+prompt = "GitHub owner?"
+default = "puremourning"
+
+[placeholders.author]
+type = "string"
+prompt = "Author (Cargo authors entry)?"
+default = "Ben Jackson <puremourning@gmail.com>"
+
+[placeholders.copyright_holder]
+type = "string"
+prompt = "Copyright holder (LICENSE)?"
+default = "Ben Jackson"
+
+[placeholders.miri]
+type = "bool"
+prompt = "Run tests under miri in CI?"
+default = true
+
+[placeholders.year]
+type = "string"
+prompt = "Copyright year (empty for the current year)?"
+default = ""
