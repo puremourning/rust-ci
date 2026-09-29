@@ -21,11 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint
+      # install-action doesn't know actionlint; use its official installer.
+      - run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
       # Also lint the rendered template's workflows.
-      - run: actionlint .github/workflows/*.yml tests/fixture/.github/workflows/*.yml
+      - run: ./actionlint .github/workflows/*.yml tests/fixture/.github/workflows/*.yml
 
   # tests/fixture is a committed render of template/. Fail if they drift, the
   # same way capnprotols checks its vendored grammar.
