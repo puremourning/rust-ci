@@ -23,16 +23,18 @@ inputs:
   cxx:
     description: >-
       C++ compiler for a git build (e.g. g++-15 or clang++-19). By default,
-      on Linux the newest installed g++-N, installing g++-14 if that is older
-      (Cap'n Proto 2.x needs C++23); elsewhere the system default.
+      on Linux the newest installed clang++-N (installing clang if there is
+      none), since the runners' default g++ can't build Cap'n Proto 2.x;
+      elsewhere the system default.
     required: false
     default: ""
 
 runs:
   using: composite
   steps:
-    # Decide what to build and the cache key for it. For a git ref the key is
-    # the commit, not the ref name, so a moved branch is a cache miss.
+    # Decide what to build, with which compiler, and the cache key for it.
+    # For a git ref the key is the commit, not the ref name, so a moved
+    # branch is a cache miss.
     - name: Resolve Cap'n Proto source
       id: source
       shell: bash
@@ -40,6 +42,7 @@ runs:
         CAPNP_VERSION: ${{ inputs.version }}
         CAPNP_REPOSITORY: ${{ inputs.repository }}
         CAPNP_REF: ${{ inputs.ref }}
+        CAPNP_CXX: ${{ inputs.cxx }}
       run: |
         set -euo pipefail
         if [[ -z "$CAPNP_REPOSITORY" ]]; then
@@ -64,9 +67,25 @@ runs:
           echo "::error::setup-capnproto: no branch or tag '$CAPNP_REF' in $CAPNP_REPOSITORY"
           exit 1
         fi
-        echo "Building $CAPNP_REPOSITORY at $sha ($CAPNP_REF)"
+        cxx=$CAPNP_CXX
+        if [[ -z "$cxx" && "$RUNNER_OS" == Linux ]]; then
+          # The runner's default g++ can't build Cap'n Proto 2.x: Ubuntu
+          # 24.04's g++ 13 lacks C++23's <print>, and g++ 14 crashes on it
+          # (internal compiler error). The images also ship clang (18 on
+          # 24.04), which builds it, so take the newest installed.
+          cxx=$(compgen -c clang++- | grep -E '^clang\+\+-[0-9]+$' \
+            | sort -u -t- -k2,2n | tail -1 || true)
+          if [[ -z "$cxx" ]]; then
+            sudo apt-get update -q
+            sudo apt-get install -q -y --no-install-recommends clang
+            cxx=clang++
+          fi
+        fi
+        echo "Building $CAPNP_REPOSITORY at $sha ($CAPNP_REF)${cxx:+ with $cxx}"
         echo "sha=$sha" >> "$GITHUB_OUTPUT"
-        echo "key=git-$sha" >> "$GITHUB_OUTPUT"
+        echo "cxx=$cxx" >> "$GITHUB_OUTPUT"
+        # The compiler is part of the key, so changing it rebuilds.
+        echo "key=git-$sha${cxx:+-$cxx}" >> "$GITHUB_OUTPUT"
 
     - name: Cache Cap'n Proto install
       id: cache
@@ -100,27 +119,13 @@ runs:
       env:
         CAPNP_REPOSITORY: ${{ inputs.repository }}
         CAPNP_SHA: ${{ steps.source.outputs.sha }}
-        CAPNP_CXX: ${{ inputs.cxx }}
+        CAPNP_CXX: ${{ steps.source.outputs.cxx }}
         PREFIX: ${{ runner.temp }}/capnp-install
       run: |
         set -euo pipefail
-        cxx=$CAPNP_CXX
-        if [[ -z "$cxx" && "$RUNNER_OS" == Linux ]]; then
-          # The runner images ship several g++ versions, but the default can
-          # be too old: Ubuntu 24.04's is 13, and Cap'n Proto 2.x needs C++23
-          # (libstdc++'s <print> arrived in 14). Take the newest installed.
-          newest() {
-            compgen -c g++- | grep -E '^g\+\+-[0-9]+$' | sort -u -t- -k2,2n | tail -1
-          }
-          cxx=$(newest || true)
-          if [[ -z "$cxx" || "${cxx#g++-}" -lt 14 ]]; then
-            sudo apt-get update -q
-            sudo apt-get install -q -y --no-install-recommends g++-14
-            cxx=g++-14
-          fi
-        fi
         compiler=()
-        if [[ -n "$cxx" ]]; then
+        if [[ -n "$CAPNP_CXX" ]]; then
+          cxx=$CAPNP_CXX
           echo "Using C++ compiler $cxx"
           compiler=(-DCMAKE_CXX_COMPILER="$cxx")
         fi

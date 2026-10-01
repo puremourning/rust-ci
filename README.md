@@ -109,9 +109,10 @@ To build from git instead, e.g. a fork, set `repository` and `ref` (a branch,
 tag or commit SHA). The ref is resolved to its commit on every run and the
 build is cached on that commit, so pushing to the branch triggers a rebuild.
 Git builds use CMake, since a checkout has no `configure` script. Cap'n
-Proto 2.x needs a C++23 compiler, newer than some runners' default: on Linux
-the action uses the newest installed `g++-N` (installing `g++-14` if that is
-older than 14), and the `cxx` input overrides the choice.
+Proto 2.x needs C++23, which the Linux runners' default g++ can't build
+(13 lacks `<print>`; 14 hits an internal compiler error), so on Linux the
+action uses the newest installed `clang++-N` (installing `clang` if there is
+none). The `cxx` input overrides the choice.
 
 ```yaml
     - uses: puremourning/rust-ci/setup-capnproto@v1
