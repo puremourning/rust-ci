@@ -1,0 +1,101 @@
+# Releases rust-ci itself (release.yml is the reusable workflow for callers).
+# Run it from the Actions tab on main: it tags HEAD as the next vX.Y.Z, moves
+# the major tag (v1, ...) that callers use to the same commit, and creates a
+# GitHub release with generated notes. Self-test must have passed on that
+# commit first.
+name: Self-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump. Breaking input changes are major.
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+      dry-run:
+        description: Work out and print the tags, but push nothing.
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: self-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are cut from main, not ${GITHUB_REF}"
+          exit 1
+
+      - uses: actions/checkout@v5
+        with:
+          # All history and tags, to find the latest version.
+          fetch-depth: 0
+
+      - name: Require a passing self-test on this commit
+        run: |
+          set -euo pipefail
+          passed=$(gh run list --workflow self-test.yml --commit "$GITHUB_SHA" \
+            --status success --json databaseId --jq length)
+          if [[ "$passed" -eq 0 ]]; then
+            echo "::error::No successful Self-test run for $GITHUB_SHA; wait for it or re-run it"
+            exit 1
+          fi
+
+      - name: Work out the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          if [[ -z "$latest" ]]; then
+            echo "::error::No vX.Y.Z tag to bump from"
+            exit 1
+          fi
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          version="v$major.$minor.$patch"
+          if [[ "$(git rev-list -n1 "$latest")" == "$GITHUB_SHA" ]]; then
+            echo "::error::$latest is already this commit; nothing to release"
+            exit 1
+          fi
+          echo "Releasing $GITHUB_SHA as $version (after $latest), moving v$major"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=v$major" >> "$GITHUB_OUTPUT"
+
+      - name: Tag
+        if: ${{ !inputs.dry-run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MAJOR: ${{ steps.version.outputs.major }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "$VERSION" "$GITHUB_SHA"
+          # The major tag moves with every release; callers pin to it.
+          git tag -f "$MAJOR" "$GITHUB_SHA"
+          git push origin "refs/tags/$VERSION"
+          git push --force origin "refs/tags/$MAJOR"
+
+      - name: GitHub release
+        if: ${{ !inputs.dry-run }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh release create "$VERSION" --verify-tag --generate-notes --title "$VERSION"

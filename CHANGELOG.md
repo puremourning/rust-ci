@@ -8,6 +8,8 @@
 - `setup-capnproto` composite action
 - `setup-capnproto`: `repository` and `ref` inputs to build from a git ref
   (e.g. a fork's branch), cached on the resolved commit
+- Self-release workflow: tags `vX.Y.Z`, moves the major tag and creates a
+  GitHub release, after a passing self-test
 - `setup-capnproto`: git builds pick a C++23-capable g++ on Linux (Cap'n
   Proto 2.x); `cxx` input to choose the compiler
 - cargo-generate template
