@@ -1,0 +1,27 @@
+# Temporary experiment: which Linux compilers build capnproto v2. Delete after.
+name: tmp-compilers
+on:
+  push:
+    branches: [setup-capnproto-cxx]
+    paths: [.github/workflows/tmp-compilers.yml]
+jobs:
+  try:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, cxx: clang++-18, install: "" }
+          - { os: ubuntu-24.04, cxx: clang++-19, install: clang-19 }
+          - { os: ubuntu-26.04, cxx: "", install: "" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - if: matrix.install != ''
+        run: sudo apt-get update -q && sudo apt-get install -q -y --no-install-recommends ${{ matrix.install }}
+      - run: compgen -c | grep -E "^(g|clang)\+\+-[0-9]+$" | sort -u | tr "\n" " "; echo; c++ --version | head -1
+      - uses: ./setup-capnproto
+        with:
+          repository: https://github.com/capnproto/capnproto
+          ref: e866bdbaa3078a4bda9e4287d2d4a773c0986902
+          cxx: ${{ matrix.cxx }}
+      - run: capnp --version
