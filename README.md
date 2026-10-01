@@ -131,6 +131,10 @@ Builds are cached per OS, arch and version (or commit).
   manually with *release* ticked to dry-run the release workflow.
 - Versioning: tags `vX.Y.Z` plus a moving major tag `v1` that callers use.
   Breaking input changes mean `v2`.
+- Releasing: run the *Self-release* workflow on `main` with a patch, minor
+  or major bump. It needs a passing Self-test on that commit, tags it as the
+  next `vX.Y.Z`, moves the major tag to it, and creates a GitHub release.
+  Tick *dry-run* to see the tags without pushing.
 
 ## License
 
