@@ -1,24 +1,75 @@
 name: Setup Cap'n Proto
-description: Build and install Cap'n Proto from source, with caching keyed on version and OS.
+description: >-
+  Build and install Cap'n Proto from source, either a release tarball or a git
+  ref (e.g. a fork's branch), with caching keyed on what was built and the OS.
 
 inputs:
   version:
-    description: "Cap'n Proto version to install (e.g. 1.3.0)"
+    description: "Cap'n Proto release to install (e.g. 1.3.0). Ignored if `repository` is set."
     required: false
     default: "1.3.0"
+  repository:
+    description: >-
+      Git URL to build from instead of a release (e.g.
+      https://github.com/you/capnproto). Needs `ref`.
+    required: false
+    default: ""
+  ref:
+    description: >-
+      Branch, tag or commit SHA in `repository`. A branch or tag is resolved to
+      its commit on every run, so the cache rebuilds when it moves.
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    # Decide what to build and the cache key for it. For a git ref the key is
+    # the commit, not the ref name, so a moved branch is a cache miss.
+    - name: Resolve Cap'n Proto source
+      id: source
+      shell: bash
+      env:
+        CAPNP_VERSION: ${{ inputs.version }}
+        CAPNP_REPOSITORY: ${{ inputs.repository }}
+        CAPNP_REF: ${{ inputs.ref }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$CAPNP_REPOSITORY" ]]; then
+          echo "key=$CAPNP_VERSION" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ -z "$CAPNP_REF" ]]; then
+          echo "::error::setup-capnproto: \`repository\` needs \`ref\`"
+          exit 1
+        fi
+        if [[ "$CAPNP_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          sha=$CAPNP_REF
+        else
+          # A branch, or a tag. For an annotated tag, ls-remote lists both the
+          # tag object and (as `^{}`) the commit it points to; take the commit.
+          refs=$(git ls-remote "$CAPNP_REPOSITORY" \
+            "refs/heads/$CAPNP_REF" "refs/tags/$CAPNP_REF" "refs/tags/$CAPNP_REF^{}")
+          sha=$(printf '%s\n' "$refs" | awk '$2 ~ /\^\{\}$/ { print $1; exit }')
+          [[ -n "$sha" ]] || sha=$(printf '%s\n' "$refs" | awk 'NR == 1 { print $1 }')
+        fi
+        if [[ -z "$sha" ]]; then
+          echo "::error::setup-capnproto: no branch or tag '$CAPNP_REF' in $CAPNP_REPOSITORY"
+          exit 1
+        fi
+        echo "Building $CAPNP_REPOSITORY at $sha ($CAPNP_REF)"
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "key=git-$sha" >> "$GITHUB_OUTPUT"
+
     - name: Cache Cap'n Proto install
       id: cache
       uses: actions/cache@v5
       with:
         path: ${{ runner.temp }}/capnp-install
-        key: capnp-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
+        key: capnp-${{ runner.os }}-${{ runner.arch }}-${{ steps.source.outputs.key }}
 
     - name: Build Cap'n Proto ${{ inputs.version }} from source
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.repository == ''
       shell: bash
       env:
         CAPNP_VERSION: ${{ inputs.version }}
@@ -33,6 +84,30 @@ runs:
         # nproc doesn't exist on macOS runners.
         make -j"$(getconf _NPROCESSORS_ONLN)"
         make install
+
+    # A git checkout has no generated `configure` script, so use CMake (on
+    # both runner images) rather than needing autotools installed.
+    - name: Build Cap'n Proto from ${{ inputs.repository }} ${{ inputs.ref }}
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.repository != ''
+      shell: bash
+      env:
+        CAPNP_REPOSITORY: ${{ inputs.repository }}
+        CAPNP_SHA: ${{ steps.source.outputs.sha }}
+        PREFIX: ${{ runner.temp }}/capnp-install
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        cd "$work"
+        git init -q src
+        git -C src fetch -q --depth 1 "$CAPNP_REPOSITORY" "$CAPNP_SHA"
+        git -C src checkout -q FETCH_HEAD
+        cmake -S src/c++ -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+          -DBUILD_SHARED_LIBS=OFF \
+          -DBUILD_TESTING=OFF
+        cmake --build build -j"$(getconf _NPROCESSORS_ONLN)"
+        cmake --install build
 
     - name: Expose capnp on PATH
       shell: bash

@@ -48,6 +48,20 @@ jobs:
       working-directory: tests/fixture
       miri: true
 
+  # setup-capnproto's git path (the hook above covers the tarball path).
+  setup-capnproto-git:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./setup-capnproto
+        with:
+          repository: https://github.com/capnproto/capnproto
+          ref: v1.3.0
+      - run: capnp --version
+
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
     permissions:
