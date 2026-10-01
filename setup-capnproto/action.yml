@@ -20,6 +20,13 @@ inputs:
       its commit on every run, so the cache rebuilds when it moves.
     required: false
     default: ""
+  cxx:
+    description: >-
+      C++ compiler for a git build (e.g. g++-15 or clang++-19). By default,
+      on Linux the newest installed g++-N, installing g++-14 if that is older
+      (Cap'n Proto 2.x needs C++23); elsewhere the system default.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -93,15 +100,36 @@ runs:
       env:
         CAPNP_REPOSITORY: ${{ inputs.repository }}
         CAPNP_SHA: ${{ steps.source.outputs.sha }}
+        CAPNP_CXX: ${{ inputs.cxx }}
         PREFIX: ${{ runner.temp }}/capnp-install
       run: |
         set -euo pipefail
+        cxx=$CAPNP_CXX
+        if [[ -z "$cxx" && "$RUNNER_OS" == Linux ]]; then
+          # The runner images ship several g++ versions, but the default can
+          # be too old: Ubuntu 24.04's is 13, and Cap'n Proto 2.x needs C++23
+          # (libstdc++'s <print> arrived in 14). Take the newest installed.
+          newest() {
+            compgen -c g++- | grep -E '^g\+\+-[0-9]+$' | sort -u -t- -k2,2n | tail -1
+          }
+          cxx=$(newest || true)
+          if [[ -z "$cxx" || "${cxx#g++-}" -lt 14 ]]; then
+            sudo apt-get update -q
+            sudo apt-get install -q -y --no-install-recommends g++-14
+            cxx=g++-14
+          fi
+        fi
+        compiler=()
+        if [[ -n "$cxx" ]]; then
+          echo "Using C++ compiler $cxx"
+          compiler=(-DCMAKE_CXX_COMPILER="$cxx")
+        fi
         work=$(mktemp -d)
         cd "$work"
         git init -q src
         git -C src fetch -q --depth 1 "$CAPNP_REPOSITORY" "$CAPNP_SHA"
         git -C src checkout -q FETCH_HEAD
-        cmake -S src/c++ -B build \
+        cmake -S src/c++ -B build ${compiler[@]+"${compiler[@]}"} \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX="$PREFIX" \
           -DBUILD_SHARED_LIBS=OFF \

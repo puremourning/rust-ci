@@ -48,18 +48,21 @@ jobs:
       working-directory: tests/fixture
       miri: true
 
-  # setup-capnproto's git path (the hook above covers the tarball path).
+  # setup-capnproto's git path (the hook above covers the tarball path): a
+  # release tag, and a pinned 2.x commit, which needs a C++23 compiler.
   setup-capnproto-git:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        ref: [v1.3.0, 3a82de9b39736a2625f03c93b2b7c50642dd5b25]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: ./setup-capnproto
         with:
           repository: https://github.com/capnproto/capnproto
-          ref: v1.3.0
+          ref: ${{ matrix.ref }}
       - run: capnp --version
 
   release:
