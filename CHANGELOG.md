@@ -15,3 +15,8 @@
 - `setup-capnproto`: `release` and `asset` inputs to download prebuilt tools
   from a GitHub release instead of building
 - cargo-generate template
+
+### Fixed
+
+- `setup-capnproto`: git builds no longer use OpenSSL, which broke them on
+  macOS runners

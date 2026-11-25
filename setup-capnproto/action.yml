@@ -173,6 +173,8 @@ runs:
 
     # A git checkout has no generated `configure` script, so use CMake (on
     # both runner images) rather than needing autotools installed.
+    # Without OpenSSL: capnp doesn't need kj's TLS, which doesn't build
+    # against the macOS runners' current Homebrew OpenSSL.
     - name: Download Cap'n Proto from ${{ inputs.repository }} release ${{ inputs.release }}
       if: steps.cache.outputs.cache-hit != 'true' && inputs.release != ''
       shell: bash
@@ -219,7 +221,8 @@ runs:
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_INSTALL_PREFIX="$PREFIX" \
           -DBUILD_SHARED_LIBS=OFF \
-          -DBUILD_TESTING=OFF
+          -DBUILD_TESTING=OFF \
+          -DWITH_OPENSSL=OFF
         cmake --build build -j"$(getconf _NPROCESSORS_ONLN)"
         cmake --install build
 
