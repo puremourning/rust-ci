@@ -102,7 +102,7 @@ Use `runner.os` inside the hook for per-OS steps.
 
 ### `setup-capnproto`
 
-Builds Cap'n Proto from source and puts `capnp` on `PATH`. By default it
+Installs Cap'n Proto and puts `capnp` on `PATH`. By default it
 builds a release tarball: input `version` (default `1.3.0`).
 
 To build from git instead, e.g. a fork, set `repository` and `ref` (a branch,
@@ -121,7 +121,22 @@ none). The `cxx` input overrides the choice.
         ref: my-branch
 ```
 
-Builds are cached per OS, arch and version (or commit).
+To skip the build, set `repository` and `release` (a GitHub release tag) to
+download prebuilt tools instead. The action picks the asset ending
+`-<os>-<arch>.tar.gz` or `.zip` (`linux`, `macos` or `windows`; `x86_64` or
+`aarch64`, falling back to `universal`) and unpacks it, minus its top
+directory, so it should hold `bin/capnp` and `include/`. If several assets
+match, `asset` gives the name prefix to choose. It's cached on the asset, so
+a rolling release that re-uploads is downloaded again.
+
+```yaml
+    - uses: puremourning/rust-ci/setup-capnproto@v1
+      with:
+        repository: https://github.com/you/capnproto
+        release: my-branch-latest
+```
+
+Installs are cached per OS, arch and version (or commit, or release asset).
 
 ## Development
 

@@ -1,7 +1,8 @@
 name: Setup Cap'n Proto
 description: >-
-  Build and install Cap'n Proto from source, either a release tarball or a git
-  ref (e.g. a fork's branch), with caching keyed on what was built and the OS.
+  Install Cap'n Proto: build it from a release tarball or a git ref (e.g. a
+  fork's branch), or download prebuilt tools from a GitHub release, with
+  caching keyed on what was installed and the OS.
 
 inputs:
   version:
@@ -11,13 +12,29 @@ inputs:
   repository:
     description: >-
       Git URL to build from instead of a release (e.g.
-      https://github.com/you/capnproto). Needs `ref`.
+      https://github.com/you/capnproto). Needs `ref` or `release`.
     required: false
     default: ""
   ref:
     description: >-
       Branch, tag or commit SHA in `repository`. A branch or tag is resolved to
       its commit on every run, so the cache rebuilds when it moves.
+    required: false
+    default: ""
+  release:
+    description: >-
+      Tag of a GitHub release in `repository` with prebuilt tools archives, to
+      download instead of building. The archive for the runner is the asset
+      ending `-<os>-<arch>.tar.gz` or `.zip` (os linux, macos or windows; arch
+      x86_64 or aarch64, or universal), unpacked with its top directory
+      stripped, so it needs `bin/capnp` and `include/`. Cached on the asset, so
+      a re-uploaded (e.g. rolling) release is downloaded again.
+    required: false
+    default: ""
+  asset:
+    description: >-
+      With `release`, the prefix of the asset name, when the release has more
+      than one archive for the runner.
     required: false
     default: ""
   cxx:
@@ -32,9 +49,9 @@ inputs:
 runs:
   using: composite
   steps:
-    # Decide what to build, with which compiler, and the cache key for it.
-    # For a git ref the key is the commit, not the ref name, so a moved
-    # branch is a cache miss.
+    # Decide what to build (with which compiler) or download, and the cache
+    # key for it. For a git ref the key is the commit, not the ref name, so a
+    # moved branch is a cache miss.
     - name: Resolve Cap'n Proto source
       id: source
       shell: bash
@@ -42,11 +59,54 @@ runs:
         CAPNP_VERSION: ${{ inputs.version }}
         CAPNP_REPOSITORY: ${{ inputs.repository }}
         CAPNP_REF: ${{ inputs.ref }}
+        CAPNP_RELEASE: ${{ inputs.release }}
+        CAPNP_ASSET: ${{ inputs.asset }}
         CAPNP_CXX: ${{ inputs.cxx }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         if [[ -z "$CAPNP_REPOSITORY" ]]; then
           echo "key=$CAPNP_VERSION" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ -n "$CAPNP_RELEASE" ]]; then
+          repo=${CAPNP_REPOSITORY#https://github.com/}
+          repo=${repo%.git}
+          case "$RUNNER_OS" in
+            Linux) os=linux ;;
+            macOS) os=macos ;;
+            Windows) os=windows ;;
+            *) echo "::error::setup-capnproto: unsupported OS $RUNNER_OS"; exit 1 ;;
+          esac
+          case "$RUNNER_ARCH" in
+            X64) arch=x86_64 ;;
+            ARM64) arch=aarch64 ;;
+            *) echo "::error::setup-capnproto: unsupported arch $RUNNER_ARCH"; exit 1 ;;
+          esac
+          # Prefer the runner's arch over a universal build.
+          assets=$(gh api "repos/$repo/releases/tags/$CAPNP_RELEASE" --jq '.assets[] | "\(.id) \(.name)"')
+          match=""
+          for a in "$arch" universal; do
+            match=$(printf '%s\n' "$assets" | awk -v p="$CAPNP_ASSET" -v s="-$os-$a" '
+              index($2, p) == 1 && ($2 ~ (s "\\.tar\\.gz$") || $2 ~ (s "\\.zip$"))')
+            [[ -z "$match" ]] || break
+          done
+          if [[ -z "$match" ]]; then
+            echo "::error::setup-capnproto: no ${CAPNP_ASSET:+$CAPNP_ASSET*}-$os-$arch archive in release $CAPNP_RELEASE of $repo"
+            exit 1
+          fi
+          if [[ $(printf '%s\n' "$match" | wc -l) -gt 1 ]]; then
+            echo "::error::setup-capnproto: several archives for $os-$arch in release $CAPNP_RELEASE of $repo; pick one with \`asset\`:"
+            printf '%s\n' "$match"
+            exit 1
+          fi
+          read -r id name <<< "$match"
+          echo "Downloading $name from release $CAPNP_RELEASE of $repo"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "asset=$name" >> "$GITHUB_OUTPUT"
+          # The asset id changes when it's re-uploaded, so a rolling release
+          # is a cache miss.
+          echo "key=release-$id" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         if [[ -z "$CAPNP_REF" ]]; then
@@ -113,8 +173,29 @@ runs:
 
     # A git checkout has no generated `configure` script, so use CMake (on
     # both runner images) rather than needing autotools installed.
+    - name: Download Cap'n Proto from ${{ inputs.repository }} release ${{ inputs.release }}
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.release != ''
+      shell: bash
+      env:
+        CAPNP_REPO: ${{ steps.source.outputs.repo }}
+        CAPNP_RELEASE: ${{ inputs.release }}
+        CAPNP_ASSET: ${{ steps.source.outputs.asset }}
+        GH_TOKEN: ${{ github.token }}
+        PREFIX: ${{ runner.temp }}/capnp-install
+      run: |
+        set -euo pipefail
+        work=$(mktemp -d)
+        gh release download "$CAPNP_RELEASE" -R "$CAPNP_REPO" -p "$CAPNP_ASSET" -D "$work"
+        mkdir -p "$PREFIX"
+        if [[ "$CAPNP_ASSET" == *.zip ]]; then
+          unzip -q "$work/$CAPNP_ASSET" -d "$work/unpacked"
+          cp -R "$work"/unpacked/*/. "$PREFIX"
+        else
+          tar xzf "$work/$CAPNP_ASSET" -C "$PREFIX" --strip-components=1
+        fi
+
     - name: Build Cap'n Proto from ${{ inputs.repository }} ${{ inputs.ref }}
-      if: steps.cache.outputs.cache-hit != 'true' && inputs.repository != ''
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.repository != '' && inputs.release == ''
       shell: bash
       env:
         CAPNP_REPOSITORY: ${{ inputs.repository }}

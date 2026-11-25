@@ -66,6 +66,30 @@ jobs:
           ref: ${{ matrix.ref }}
       - run: capnp --version
 
+  # setup-capnproto's release path: prebuilt tools from the newtype fork's
+  # rolling release (tar.gz on Linux and macOS, zip on Windows).
+  setup-capnproto-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./setup-capnproto
+        with:
+          repository: https://github.com/puremourning/capnproto
+          release: newtype-latest
+      # Compile a schema importing a standard one, to check capnp finds the
+      # unpacked include/.
+      - shell: bash
+        run: |
+          capnp --version
+          cd "$RUNNER_TEMP"
+          printf '%s\n' '@0xd6c2b6f7e1a2b3c4;' 'using Cxx = import "/capnp/c++.capnp";' \
+            'struct Foo { a @0 :Text; }' > foo.capnp
+          capnp compile -o- foo.capnp > /dev/null
+
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.release
     permissions:

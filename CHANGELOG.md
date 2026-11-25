@@ -12,4 +12,6 @@
   GitHub release, after a passing self-test
 - `setup-capnproto`: git builds use the newest clang on Linux (the default
   g++ can't build Cap'n Proto 2.x); `cxx` input to choose the compiler
+- `setup-capnproto`: `release` and `asset` inputs to download prebuilt tools
+  from a GitHub release instead of building
 - cargo-generate template
